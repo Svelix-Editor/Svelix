@@ -1,7 +1,10 @@
-# Tauri + SvelteKit + TypeScript
+# Svelix Editor (Tauri + SvelteKit + TypeScript)
 
-This template should help get you started developing with Tauri, SvelteKit and TypeScript in Vite.
+This is a lightweight editor projext optimized for Svelte5 and SvelteKit.
+Features an intuitive, VS Code-style UI.
 
-## Recommended IDE Setup
+## Launch
 
-[VS Code](https://code.visualstudio.com/) + [Svelte](https://marketplace.visualstudio.com/items?itemName=svelte.svelte-vscode) + [Tauri](https://marketplace.visualstudio.com/items?itemName=tauri-apps.tauri-vscode) + [rust-analyzer](https://marketplace.visualstudio.com/items?itemName=rust-lang.rust-analyzer).
+```bash
+npm run tauri dev
+```

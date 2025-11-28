@@ -1,156 +1,162 @@
 <script lang="ts">
-  import { invoke } from "@tauri-apps/api/core";
+  import { onMount, onDestroy } from 'svelte';
+  import { basicSetup } from 'codemirror';
+  import { EditorState } from '@codemirror/state';
+  import { oneDark } from '@codemirror/theme-one-dark';
+  import { EditorView, keymap, type ViewUpdate } from '@codemirror/view';
+  import { defaultKeymap } from '@codemirror/commands';
+  import { open } from '@tauri-apps/plugin-dialog';
+  import { readTextFile } from '@tauri-apps/plugin-fs';
 
-  let name = $state("");
-  let greetMsg = $state("");
+  // エディタのコンテナ要素への参照
+  let editorElement: HTMLElement;
+  // CodeMirrorのエディタインスタンス
+  let editorView: EditorView | undefined;
 
-  async function greet(event: Event) {
-    event.preventDefault();
-    // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
-    greetMsg = await invoke("greet", { name });
+  // 現在開いているファイルのパス
+  let currentFilePath = $state<string | null>(null);
+
+  // ファイルを開く関数
+  async function openFile() {
+    try {
+      const selected = await open({
+        multiple: false,
+        filters: [{
+          name: 'Text Files',
+          extensions: ['txt', 'md', 'js', 'ts', 'svelte', 'json', 'html', 'css', 'rs']
+        }]
+      });
+
+      if (selected === null) {
+        return; // キャンセルされた場合
+      }
+      
+      const filePath = selected as string;
+      const content = await readTextFile(filePath);
+      
+      currentFilePath = filePath;
+      
+      // エディタの内容を更新
+      if (editorView) {
+        editorView.dispatch({
+          changes: {
+            from: 0,
+            to: editorView.state.doc.length,
+            insert: content
+          }
+        });
+      }
+    } catch (err) {
+      console.error('Failed to open file:', err);
+      alert('ファイルの読み込みに失敗しました');
+    }
   }
+
+  onMount(() => {
+    if (!editorElement) return;
+
+    // CodeMirrorの初期状態設定
+    const startState = EditorState.create({
+      doc: '// ここにファイルの内容が表示されます',
+      extensions: [
+        basicSetup,
+        keymap.of(defaultKeymap),
+        oneDark, // ダークテーマ
+        EditorView.updateListener.of((update: ViewUpdate) => {
+          if (update.docChanged) {
+            // ドキュメントが変更されたときの処理（必要に応じて保存機能などを追加）
+          }
+        })
+      ]
+    });
+
+    // エディタの作成
+    editorView = new EditorView({
+      state: startState,
+      parent: editorElement
+    });
+  });
+
+  onDestroy(() => {
+    // コンポーネント破棄時にエディタも破棄
+    if (editorView) {
+      editorView.destroy();
+    }
+  });
 </script>
 
 <main class="container">
-  <h1>Welcome to Tauri + Svelte</h1>
-
-  <div class="row">
-    <a href="https://vite.dev" target="_blank">
-      <img src="/vite.svg" class="logo vite" alt="Vite Logo" />
-    </a>
-    <a href="https://tauri.app" target="_blank">
-      <img src="/tauri.svg" class="logo tauri" alt="Tauri Logo" />
-    </a>
-    <a href="https://svelte.dev" target="_blank">
-      <img src="/svelte.svg" class="logo svelte-kit" alt="SvelteKit Logo" />
-    </a>
-  </div>
-  <p>Click on the Tauri, Vite, and SvelteKit logos to learn more.</p>
-
-  <form class="row" onsubmit={greet}>
-    <input id="greet-input" placeholder="Enter a name..." bind:value={name} />
-    <button type="submit">Greet</button>
-  </form>
-  <p>{greetMsg}</p>
+  <header class="toolbar">
+    <button onclick={openFile}>ファイルを開く</button>
+    <span class="filename">{currentFilePath ? currentFilePath : 'ファイル未選択'}</span>
+  </header>
+  
+  <div class="editor-container" bind:this={editorElement}></div>
 </main>
 
 <style>
-.logo.vite:hover {
-  filter: drop-shadow(0 0 2em #747bff);
-}
-
-.logo.svelte-kit:hover {
-  filter: drop-shadow(0 0 2em #ff3e00);
-}
-
-:root {
-  font-family: Inter, Avenir, Helvetica, Arial, sans-serif;
-  font-size: 16px;
-  line-height: 24px;
-  font-weight: 400;
-
-  color: #0f0f0f;
-  background-color: #f6f6f6;
-
-  font-synthesis: none;
-  text-rendering: optimizeLegibility;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-  -webkit-text-size-adjust: 100%;
-}
-
-.container {
-  margin: 0;
-  padding-top: 10vh;
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  text-align: center;
-}
-
-.logo {
-  height: 6em;
-  padding: 1.5em;
-  will-change: filter;
-  transition: 0.75s;
-}
-
-.logo.tauri:hover {
-  filter: drop-shadow(0 0 2em #24c8db);
-}
-
-.row {
-  display: flex;
-  justify-content: center;
-}
-
-a {
-  font-weight: 500;
-  color: #646cff;
-  text-decoration: inherit;
-}
-
-a:hover {
-  color: #535bf2;
-}
-
-h1 {
-  text-align: center;
-}
-
-input,
-button {
-  border-radius: 8px;
-  border: 1px solid transparent;
-  padding: 0.6em 1.2em;
-  font-size: 1em;
-  font-weight: 500;
-  font-family: inherit;
-  color: #0f0f0f;
-  background-color: #ffffff;
-  transition: border-color 0.25s;
-  box-shadow: 0 2px 2px rgba(0, 0, 0, 0.2);
-}
-
-button {
-  cursor: pointer;
-}
-
-button:hover {
-  border-color: #396cd8;
-}
-button:active {
-  border-color: #396cd8;
-  background-color: #e8e8e8;
-}
-
-input,
-button {
-  outline: none;
-}
-
-#greet-input {
-  margin-right: 5px;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    color: #f6f6f6;
-    background-color: #2f2f2f;
+  :global(body) {
+    margin: 0;
+    padding: 0;
+    overflow: hidden;
+    background-color: #282c34;
+    color: white;
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
   }
 
-  a:hover {
-    color: #24c8db;
+  .container {
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+    width: 100vw;
   }
 
-  input,
+  .toolbar {
+    padding: 10px;
+    background-color: #21252b;
+    border-bottom: 1px solid #181a1f;
+    display: flex;
+    align-items: center;
+    gap: 15px;
+  }
+
+  .filename {
+    font-size: 0.9em;
+    color: #abb2bf;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
   button {
-    color: #ffffff;
-    background-color: #0f0f0f98;
+    padding: 6px 12px;
+    background-color: #3d4350;
+    color: #d7dae0;
+    border: 1px solid #181a1f;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 0.9em;
   }
-  button:active {
-    background-color: #0f0f0f69;
-  }
-}
 
+  button:hover {
+    background-color: #4b5363;
+  }
+
+  .editor-container {
+    flex-grow: 1;
+    overflow: hidden;
+    /* CodeMirrorの高さを親要素に合わせる */
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* CodeMirrorのスタイル調整 */
+  :global(.cm-editor) {
+    height: 100%;
+    font-size: 14px;
+  }
+  
+  :global(.cm-scroller) {
+    overflow: auto;
+  }
 </style>
