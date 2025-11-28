@@ -17,7 +17,7 @@
   import { StreamLanguage } from '@codemirror/language';
   import { dockerFile } from '@codemirror/legacy-modes/mode/dockerfile';
   import { linter, type Diagnostic as CodeMirrorDiagnostic, forceLinting } from "@codemirror/lint"; // CodeMirrorのLinter
-  import { autocompletion, type CompletionContext, type CompletionResult } from "@codemirror/autocomplete"; // 自動補完
+  import { autocompletion, type CompletionContext, type CompletionResult, acceptCompletion } from "@codemirror/autocomplete"; // 自動補完
   import { open, save, ask } from '@tauri-apps/plugin-dialog';
   import { invoke } from '@tauri-apps/api/core';
   import { getCurrentWindow } from '@tauri-apps/api/window';
@@ -596,6 +596,10 @@
         saveFile();
         return true;
       }
+    },
+    {
+      key: "Tab",
+      run: acceptCompletion
     }
   ];
 
