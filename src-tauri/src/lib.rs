@@ -2,6 +2,8 @@
 use std::fs;
 use serde::{Serialize, Deserialize};
 
+mod lsp;
+
 #[derive(Serialize, Deserialize, Debug, Clone)]
 struct FileEntry {
     name: String,
@@ -18,6 +20,13 @@ fn greet(name: &str) -> String {
 #[tauri::command]
 fn read_file_content(path: &str) -> Result<String, String> {
     fs::read_to_string(path).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn get_cwd() -> Result<String, String> {
+    std::env::current_dir()
+        .map(|p| p.to_string_lossy().to_string())
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -69,6 +78,7 @@ fn exit_app() {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .manage(lsp::LspState::default())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init()) // フロントエンドからの直接アクセスも念のため残しておくが、基本はCommand経由にする
         .plugin(tauri_plugin_opener::init())
@@ -77,7 +87,10 @@ pub fn run() {
             read_file_content,
             write_file_content,
             read_dir,
-            exit_app
+            get_cwd,
+            exit_app,
+            lsp::start_lsp,
+            lsp::send_lsp_message
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -6,6 +6,7 @@
   import { EditorView, keymap, type ViewUpdate } from '@codemirror/view';
   import { defaultKeymap } from '@codemirror/commands';
   import { svelteRunes } from '../lib/editor/runes-highlight';
+  import { LspService, type PublishDiagnosticsParams, type Diagnostic } from '../lib/services/lsp';
   import { svelte } from '@replit/codemirror-lang-svelte';
   import { javascript } from '@codemirror/lang-javascript';
   import { css } from '@codemirror/lang-css';
@@ -15,6 +16,7 @@
   import { rust } from '@codemirror/lang-rust';
   import { StreamLanguage } from '@codemirror/language';
   import { dockerFile } from '@codemirror/legacy-modes/mode/dockerfile';
+  import { linter, type Diagnostic as CodeMirrorDiagnostic, forceLinting } from "@codemirror/lint"; // CodeMirrorのLinter
   import { open, save, ask } from '@tauri-apps/plugin-dialog';
   import { invoke } from '@tauri-apps/api/core';
   import { getCurrentWindow } from '@tauri-apps/api/window';
@@ -25,7 +27,14 @@
   let editorElement: HTMLElement;
   // CodeMirrorのエディタインスタンス
   let editorView: EditorView | undefined;
+  // ドキュメントのバージョン管理用
+  let docVersion = $state(0);
+  // 現在の診断情報
+  let currentDiagnostics: CodeMirrorDiagnostic[] = [];
 
+  // Tauri環境かどうか
+  let isTauri = false;
+  
   // ファイル情報の型定義
   interface FileInfo {
     path: string | null; // nullなら新規ファイル
@@ -64,6 +73,102 @@
   // メニューが開いているかどうか
   let isFileMenuOpen = $state(false);
 
+  // Runメニューが開いているかどうか
+  let isRunMenuOpen = $state(false);
+
+  function toggleRunMenu(event: MouseEvent) {
+    event.stopPropagation();
+    isRunMenuOpen = !isRunMenuOpen;
+  }
+  
+  // LSPを起動する関数
+  async function startSvelteLsp() {
+    // 既に起動していればスキップなどの処理を入れるのが望ましいが、LspService側で既存プロセスをkillしているので大丈夫
+    const command = 'npx';
+    const args = ['svelte-language-server', '--stdio'];
+    
+    try {
+        console.log('Starting Svelte LSP...');
+        const res = await LspService.getInstance().start(command, args);
+        console.log(res);
+        
+        // 初期化リクエスト送信
+        const root = currentFolderPath || await invoke<string>('get_cwd').catch(() => null);
+        if (root) {
+            await LspService.getInstance().initialize(root);
+            console.log('Svelte LSP initialized at', root);
+        }
+    } catch (e) {
+        console.error('Failed to start Svelte LSP:', e);
+    }
+  }
+
+  async function handleRunAction(action: string) {
+    if (action === 'startLsp') {
+        const cmd = prompt('Enter LSP Command', 'npx svelte-language-server --stdio');
+        if (cmd) {
+            const args = cmd.split(' ');
+            const command = args.shift() || '';
+            try {
+                const res = await LspService.getInstance().start(command, args);
+                console.log(res);
+                alert(res);
+                
+                // 初期化リクエスト送信
+                // ルートパスは現在開いているフォルダか、なければカレント
+                const root = currentFolderPath || await invoke<string>('get_cwd').catch(() => null);
+                if (root) {
+                    await LspService.getInstance().initialize(root);
+                }
+            } catch (e) {
+                console.error(e);
+                alert('Failed to start LSP: ' + e);
+            }
+        }
+    }
+    isRunMenuOpen = false;
+  }
+  
+  // 診断情報をCodeMirror形式に変換する
+  function convertDiagnostics(diagnostics: Diagnostic[], view: EditorView): CodeMirrorDiagnostic[] {
+    return diagnostics.map(d => {
+      const from = view.state.doc.line(d.range.start.line + 1).from + d.range.start.character;
+      const to = view.state.doc.line(d.range.end.line + 1).from + d.range.end.character;
+      
+      // severityのマッピング (LSP: 1=Error, 2=Warning, 3=Information, 4=Hint)
+      let severity: "error" | "warning" | "info" | "hint" = "error";
+      if (d.severity === 2) severity = "warning";
+      if (d.severity === 3) severity = "info";
+      if (d.severity === 4) severity = "hint";
+
+      return {
+        from,
+        to: to === from ? to + 1 : to, // 長さ0の場合は1文字分確保
+        severity,
+        message: d.message,
+        source: d.source
+      };
+    });
+  }
+
+  // LSP用の言語ID取得ヘルパー
+  function getLanguageId(path: string | null): string {
+    if (!path) return 'plaintext';
+    const ext = path.split('.').pop()?.toLowerCase();
+    switch (ext) {
+      case 'rs': return 'rust';
+      case 'js': return 'javascript';
+      case 'ts': return 'typescript';
+      case 'svelte': return 'svelte';
+      case 'html': return 'html';
+      case 'css': return 'css';
+      case 'json': return 'json';
+      case 'md': case 'markdown': return 'markdown';
+      case 'yaml': case 'yml': return 'yaml';
+      default: return 'plaintext';
+    }
+  }
+
   // メニュークリック時のハンドラ
   function toggleFileMenu(event: MouseEvent) {
     event.stopPropagation();
@@ -71,8 +176,9 @@
   }
 
   // メニュー外クリック時のハンドラ
-  function closeMenu() {
+    function closeMenu() {
     isFileMenuOpen = false;
+    isRunMenuOpen = false;
   }
 
   async function handleFileAction(action: string) {
@@ -161,6 +267,16 @@
         content: content,
         isDirty: false
       }];
+      
+      // LSPにdidOpen通知
+      const ext = entry.path.split('.').pop()?.toLowerCase();
+      // SvelteとRustファイル対象
+      if (ext === 'rs') {
+        await LspService.getInstance().didOpen(entry.path, content, 'rust');
+      } else if (ext === 'svelte') {
+        await LspService.getInstance().didOpen(entry.path, content, 'svelte');
+      }
+
       switchTab(openedFiles.length - 1);
     } catch (err) {
       console.error('Failed to open file:', err);
@@ -200,6 +316,14 @@
         content: content,
         isDirty: false
       }];
+      
+      // LSPにdidOpen通知
+      const ext = filePath.split('.').pop()?.toLowerCase();
+      if (ext === 'rs') {
+        await LspService.getInstance().didOpen(filePath, content, 'rust');
+      } else if (ext === 'svelte') {
+        await LspService.getInstance().didOpen(filePath, content, 'svelte');
+      }
       
       // 新しいファイルをアクティブにする
       switchTab(openedFiles.length - 1);
@@ -403,6 +527,16 @@
   const languageConf = new Compartment();
 
   onMount(() => {
+    // Tauri環境かどうかの判定 (簡易的)
+    isTauri = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
+    
+    // Tauri環境ならLSPを自動起動
+    if (isTauri) {
+        setTimeout(() => {
+            startSvelteLsp();
+        }, 1000); // アプリ起動直後の負荷分散のため少し待つ
+    }
+
     if (!editorElement) return;
 
     // CodeMirrorの初期状態設定
@@ -414,11 +548,25 @@
         oneDark, // ダークテーマ
         languageConf.of([]), // 初期言語設定
         svelteRunes(),
+        // Linterの設定: 外部からの診断情報を反映する
+        linter(view => {
+            return currentDiagnostics;
+        }),
         EditorView.updateListener.of((update: ViewUpdate) => {
           if (update.docChanged && !isOpeningFile && activeFileIndex >= 0) {
             openedFiles[activeFileIndex].isDirty = true;
             // 念のためcontentも更新しておく（スイッチ時に使用するため）
-            openedFiles[activeFileIndex].content = update.state.doc.toString();
+            const newContent = update.state.doc.toString();
+            openedFiles[activeFileIndex].content = newContent;
+            
+            // LSPにdidChange通知
+            // 本当はIncremental updateが望ましいが、まずはFull text sync
+            const currentPath = openedFiles[activeFileIndex].path;
+            const ext = currentPath?.split('.').pop()?.toLowerCase();
+            if (currentPath && (ext === 'rs' || ext === 'svelte')) {
+                docVersion++;
+                LspService.getInstance().didChange(currentPath, newContent, docVersion);
+            }
           }
         })
       ]
@@ -429,6 +577,28 @@
       state: startState,
       parent: editorElement
     });
+
+    // 診断情報のリスナー登録
+    const unsubscribeDiagnostics = LspService.getInstance().onDiagnostics((params) => {
+        // 現在開いているファイルに関する診断情報かチェック
+        // URIエンコードされている場合があるのでデコードして比較
+        const decodedUri = decodeURIComponent(params.uri);
+        // パス区切り文字の違いなどを吸収するため、簡易的なチェックを行う
+        // 本来は正規化して比較すべき
+        if (activeFile && activeFile.path && decodedUri.includes(activeFile.path.replace(/\\/g, '/'))) {
+            if (editorView) {
+                currentDiagnostics = convertDiagnostics(params.diagnostics, editorView);
+                // 診断情報を強制的に再評価させる
+                forceLinting(editorView);
+            }
+        }
+    });
+
+    // onDestoryで解除できるようにしておく（ただしonDestoryはコンポーネント破棄時なので、
+    // ここで登録したリスナーはコンポーネントが生きている間はずっと有効でよい）
+    return () => {
+        unsubscribeDiagnostics();
+    };
   });
 
   onDestroy(() => {
@@ -470,7 +640,21 @@
           </div>
         {/if}
       </div>
-      {#each ['Edit', 'Selection', 'View', 'Go', 'Run', 'Terminal', 'Help'] as menu}
+      <div class="menu-item-wrapper">
+        <div 
+            class="menu-item {isRunMenuOpen ? 'active' : ''}"
+            onclick={toggleRunMenu}
+            onkeydown={(e) => e.key === 'Enter' && toggleRunMenu(e as unknown as MouseEvent)}
+            role="button"
+            tabindex="0"
+        >Run</div>
+        {#if isRunMenuOpen}
+            <div class="dropdown-menu">
+                <div class="dropdown-item" onclick={() => handleRunAction('startLsp')} onkeydown={() => {}} role="menuitem" tabindex="0">Start LSP...</div>
+            </div>
+        {/if}
+      </div>
+      {#each ['Edit', 'Selection', 'View', 'Go', 'Terminal', 'Help'] as menu}
         <div class="menu-item">{menu}</div>
       {/each}
     </div>
