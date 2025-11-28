@@ -7,7 +7,7 @@
   import { defaultKeymap } from '@codemirror/commands';
   import { open, save } from '@tauri-apps/plugin-dialog';
   import { invoke } from '@tauri-apps/api/core';
-  import { Files, Search, GitGraph, Settings, X, Circle } from 'lucide-svelte';
+  import { Files, Search, GitGraph, Settings, X, Circle, ChevronRight, ChevronDown, File, Folder } from 'lucide-svelte';
 
   // エディタのコンテナ要素への参照
   let editorElement: HTMLElement;
@@ -22,10 +22,24 @@
     scrollPosition?: number;
   }
 
+  // ファイルエントリの型定義 (Rust側と同期)
+  interface FileEntry {
+    name: string;
+    path: string;
+    is_dir: boolean;
+    children?: FileEntry[];
+    isOpen?: boolean; // フォルダが開いているか（フロントエンド用）
+  }
+
   // 開いているファイルのリスト
   let openedFiles = $state<FileInfo[]>([]);
   // 現在アクティブなファイルのインデックス
   let activeFileIndex = $state<number>(-1);
+  
+  // 現在開いているフォルダパス
+  let currentFolderPath = $state<string | null>(null);
+  // フォルダ内のファイルリスト
+  let folderFiles = $state<FileEntry[]>([]);
 
   // 現在アクティブなファイル情報を取得するヘルパー
   let activeFile = $derived(activeFileIndex >= 0 && activeFileIndex < openedFiles.length ? openedFiles[activeFileIndex] : null);
@@ -53,6 +67,8 @@
     console.log(`Action: ${action}`);
     if (action === 'openFile') {
       openFile();
+    } else if (action === 'openFolder') {
+      openFolder();
     } else if (action === 'newTextFile' || action === 'newFile') {
       createNewFile();
     } else if (action === 'save') {
@@ -61,6 +77,70 @@
       // 終了処理（未実装）
     }
     isFileMenuOpen = false;
+  }
+
+  // フォルダを開く関数
+  async function openFolder() {
+    try {
+      const selected = await open({
+        directory: true,
+        multiple: false,
+      });
+
+      if (selected === null) {
+        return;
+      }
+
+      const folderPath = selected as string;
+      currentFolderPath = folderPath;
+      await loadDir(folderPath);
+      
+    } catch (err) {
+      console.error('Failed to open folder:', err);
+      alert('フォルダの読み込みに失敗しました');
+    }
+  }
+
+  // ディレクトリを読み込む関数
+  async function loadDir(path: string) {
+    try {
+      const entries = await invoke<FileEntry[]>('read_dir', { path });
+      folderFiles = entries;
+    } catch (err) {
+      console.error('Failed to read directory:', err);
+    }
+  }
+
+  // ツリービューでアイテムをクリックしたとき
+  async function handleTreeItemClick(entry: FileEntry) {
+    if (entry.is_dir) {
+      // フォルダの場合は展開/折りたたみ（今回は簡易的に直下の読み込みのみ実装済み、再帰は未実装）
+      // 再帰的なツリーを実装するには、entry.children に読み込んだ結果を格納し、再描画する必要がある
+      // ここでは簡易的に、ルートフォルダを入れ替えるのではなく、フォルダの中身を展開するロジックが必要
+      // ですが、まずはルートフォルダの表示切り替えとして実装します
+      // 本格的なツリービューには再帰コンポーネントが必要
+      // entry.isOpen = !entry.isOpen;
+    } else {
+      // ファイルの場合は開く
+      // 既に開いているかチェック
+      const existingIndex = openedFiles.findIndex(f => f.path === entry.path);
+      if (existingIndex !== -1) {
+        switchTab(existingIndex);
+        return;
+      }
+
+      try {
+        const content = await invoke<string>('read_file_content', { path: entry.path });
+        openedFiles = [...openedFiles, {
+          path: entry.path,
+          content: content,
+          isDirty: false
+        }];
+        switchTab(openedFiles.length - 1);
+      } catch (err) {
+        console.error('Failed to open file:', err);
+      }
+    }
   }
 
   // ファイルを開く関数
@@ -376,14 +456,40 @@
         </div>
       </div>
 
-      <!-- No Folder Opened Section -->
+      <!-- No Folder Opened Section / File Tree -->
       <div class="explorer-section">
-        <div class="section-header">NO FOLDER OPENED</div>
-        <div class="section-body">
-          <p>You have not yet opened a folder.</p>
-          <button onclick={openFile} class="primary-button">Open File</button>
-          <!-- 将来的にはOpen Folderボタンも追加 -->
-        </div>
+        {#if currentFolderPath}
+          <div class="section-header" title={currentFolderPath}>{getFileName(currentFolderPath).toUpperCase()}</div>
+          <div class="section-body file-tree">
+            {#each folderFiles as entry}
+              <div 
+                class="tree-item"
+                onclick={() => handleTreeItemClick(entry)}
+                onkeydown={(e) => e.key === 'Enter' && handleTreeItemClick(entry)}
+                role="button"
+                tabindex="0"
+              >
+                <span class="tree-icon">
+                  {#if entry.is_dir}
+                    <ChevronRight size={14} />
+                    <Folder size={14} class="ml-1" />
+                  {:else}
+                    <span class="spacer"></span>
+                    <File size={14} class="ml-1" />
+                  {/if}
+                </span>
+                <span class="tree-name">{entry.name}</span>
+              </div>
+            {/each}
+          </div>
+        {:else}
+          <div class="section-header">NO FOLDER OPENED</div>
+          <div class="section-body">
+            <p>You have not yet opened a folder.</p>
+            <button onclick={openFile} class="primary-button">Open File</button>
+            <button onclick={openFolder} class="primary-button" style="margin-top: 10px;">Open Folder</button>
+          </div>
+        {/if}
       </div>
     </div>
   </aside>
@@ -418,11 +524,11 @@
       {#if openedFiles.length === 0}
         <!-- タブがない場合のプレースホルダー（必要に応じて） -->
       {/if}
-    </div>
+  </div>
     
     <!-- Editor -->
     <div class="editor-content" bind:this={editorElement}></div>
-  </main>
+</main>
   
   <!-- Status Bar -->
   <footer class="status-bar">
@@ -538,8 +644,8 @@
   .activity-bar {
     grid-area: activity-bar;
     background-color: #333333;
-    display: flex;
-    flex-direction: column;
+  display: flex;
+  flex-direction: column;
     align-items: center;
     padding-top: 10px;
   }
@@ -551,7 +657,7 @@
     padding: 0;
     cursor: pointer;
     display: flex;
-    justify-content: center;
+  justify-content: center;
     align-items: center;
     width: 48px;
     height: 48px;
@@ -580,6 +686,7 @@
     border-right: 1px solid #1e1e1e;
     display: flex;
     flex-direction: column;
+    overflow: hidden; /* コンテンツが溢れた場合に備えて制限 */
   }
 
   .sidebar-header {
@@ -590,11 +697,13 @@
     display: flex;
     justify-content: space-between;
     align-items: center;
+    flex-shrink: 0; /* ヘッダーが縮まないように */
   }
 
   .sidebar-content {
     flex-grow: 1;
     overflow-y: auto;
+    min-height: 0; /* Flexbox内でのスクロールに必要 */
   }
 
   .explorer-section {
@@ -612,7 +721,48 @@
   .section-body {
     padding: 10px;
     font-size: 13px;
-    text-align: center;
+  text-align: center;
+}
+
+  .file-tree {
+    padding: 0;
+    text-align: left;
+  }
+
+  .tree-item {
+    display: flex;
+    align-items: center;
+    padding: 3px 10px;
+    cursor: pointer;
+    font-size: 13px;
+    color: #cccccc;
+  }
+
+  .tree-item:hover {
+    background-color: #2a2d2e;
+  }
+
+  .tree-icon {
+    display: flex;
+    align-items: center;
+    margin-right: 6px;
+    color: #8da5b5; /* Icon color */
+  }
+  
+  /* ml-1 class replacement */
+  :global(.ml-1) {
+    margin-left: 4px;
+  }
+
+  .spacer {
+    width: 14px; /* ChevronRight size */
+    display: inline-block;
+  }
+
+  .tree-name {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
   .primary-button {
@@ -662,7 +812,7 @@
   }
 
   .file-info {
-    display: flex;
+  display: flex;
     align-items: center;
     overflow: hidden;
     flex-grow: 1;
@@ -683,8 +833,8 @@
     border-radius: 3px;
     display: none; /* デフォルト非表示 */
     align-items: center;
-    justify-content: center;
-  }
+  justify-content: center;
+}
 
   .open-editor-item:hover .close-btn {
     display: flex; /* ホバー時表示 */
@@ -728,7 +878,7 @@
     border-top: 1px solid transparent; 
     min-width: 120px;
     max-width: 200px;
-    cursor: pointer;
+  cursor: pointer;
     font-size: 13px;
   }
 
@@ -838,6 +988,7 @@
   }
   
   :global(.cm-scroller) {
-    overflow: auto;
+    overflow: auto !important;
+    height: 100% !important;
   }
 </style>
