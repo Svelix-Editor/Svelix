@@ -1,6 +1,7 @@
 <script lang="ts">
   import { invoke } from '@tauri-apps/api/core';
   import { ChevronRight, ChevronDown, File, Folder } from 'lucide-svelte';
+  import FileTreeItem from './FileTreeItem.svelte';
 
   // 親から受け取るprops
   let { 
@@ -80,7 +81,7 @@
       <div class="loading-message" style="padding-left: {(level + 1) * 10 + 10}px">Loading...</div>
     {:else}
       {#each children as child}
-        <svelte:self entry={child} level={level + 1} {onFileClick} />
+        <FileTreeItem entry={child} level={level + 1} {onFileClick} />
       {/each}
     {/if}
   {/if}

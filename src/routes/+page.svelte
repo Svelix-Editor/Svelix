@@ -1,10 +1,19 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
   import { basicSetup } from 'codemirror';
-  import { EditorState } from '@codemirror/state';
+  import { EditorState, Compartment } from '@codemirror/state';
   import { oneDark } from '@codemirror/theme-one-dark';
-  import { EditorView, keymap, type ViewUpdate } from '@codemirror/view';
+  import { EditorView, keymap, type ViewUpdate, MatchDecorator, ViewPlugin, Decoration, type DecorationSet } from '@codemirror/view';
   import { defaultKeymap } from '@codemirror/commands';
+  import { svelte } from '@replit/codemirror-lang-svelte';
+  import { javascript } from '@codemirror/lang-javascript';
+  import { css } from '@codemirror/lang-css';
+  import { json } from '@codemirror/lang-json';
+  import { yaml } from '@codemirror/lang-yaml';
+  import { markdown } from '@codemirror/lang-markdown';
+  import { rust } from '@codemirror/lang-rust';
+  import { StreamLanguage } from '@codemirror/language';
+  import { dockerFile } from '@codemirror/legacy-modes/mode/dockerfile';
   import { open, save, ask } from '@tauri-apps/plugin-dialog';
   import { invoke } from '@tauri-apps/api/core';
   import { getCurrentWindow } from '@tauri-apps/api/window';
@@ -224,7 +233,8 @@
           from: 0,
           to: editorView.state.doc.length,
           insert: file.content
-        }
+        },
+        effects: languageConf.reconfigure(getLanguageExtension(file.path))
       });
       
       // 少し待ってからフラグを下ろす
@@ -274,7 +284,8 @@
         if (editorView) {
           isOpeningFile = true;
           editorView.dispatch({
-            changes: { from: 0, to: editorView.state.doc.length, insert: file.content }
+            changes: { from: 0, to: editorView.state.doc.length, insert: file.content },
+            effects: languageConf.reconfigure(getLanguageExtension(file.path))
           });
           setTimeout(() => isOpeningFile = false, 50);
         }
@@ -300,6 +311,44 @@
     if (!path) return 'Untitled';
     // WindowsとUnix系の両方のパス区切りに対応
     return path.split(/[\\/]/).pop() || 'Untitled';
+  }
+
+  // 言語拡張を取得するヘルパー
+  function getLanguageExtension(path: string | null) {
+    if (!path) return [];
+    const fileName = path.split(/[\\/]/).pop() || '';
+    
+    // Dockerfileの判定 (拡張子なしの場合もあるためファイル名で判定)
+    if (fileName === 'Dockerfile' || fileName.endsWith('.dockerfile')) {
+      return StreamLanguage.define(dockerFile);
+    }
+
+    const ext = fileName.split('.').pop()?.toLowerCase();
+    
+    switch (ext) {
+      case 'svelte':
+        return svelte();
+      case 'js':
+      case 'mjs':
+      case 'cjs':
+        return javascript();
+      case 'ts':
+        return javascript({ typescript: true });
+      case 'css':
+        return css();
+      case 'json':
+        return json();
+      case 'yaml':
+      case 'yml':
+        return yaml();
+      case 'md':
+      case 'markdown':
+        return markdown();
+      case 'rs':
+        return rust();
+      default:
+        return [];
+    }
   }
 
   // ファイルを保存する関数
@@ -349,6 +398,37 @@
     }
   ];
 
+  // Runesハイライトの設定
+  const runesMatcher = new MatchDecorator({
+    regexp: /\$(state|derived|effect|props|bindable|inspect|host)(?:\.[a-zA-Z0-9_]+)?/g,
+    decoration: Decoration.mark({
+      class: "cm-svelte-rune"
+    })
+  });
+
+  const runesPlugin = ViewPlugin.fromClass(class {
+    decorations: DecorationSet;
+    constructor(view: EditorView) {
+      this.decorations = runesMatcher.createDeco(view);
+    }
+    update(update: ViewUpdate) {
+      this.decorations = runesMatcher.updateDeco(update, this.decorations);
+    }
+  }, {
+    decorations: v => v.decorations
+  });
+
+  // Runesのスタイル定義
+  const runesTheme = EditorView.baseTheme({
+    ".cm-svelte-rune": {
+      color: "#c678dd", // One Darkの紫系、あるいはもっと目立つ色
+      fontWeight: "bold"
+    }
+  });
+
+  // 言語設定用のCompartment
+  const languageConf = new Compartment();
+
   onMount(() => {
     if (!editorElement) return;
 
@@ -359,6 +439,9 @@
         basicSetup,
         keymap.of([...customKeymap, ...defaultKeymap]),
         oneDark, // ダークテーマ
+        languageConf.of([]), // 初期言語設定
+        runesPlugin,
+        runesTheme,
         EditorView.updateListener.of((update: ViewUpdate) => {
           if (update.docChanged && !isOpeningFile && activeFileIndex >= 0) {
             openedFiles[activeFileIndex].isDirty = true;
