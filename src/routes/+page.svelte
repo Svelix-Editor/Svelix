@@ -22,6 +22,29 @@
   // ファイルオープン中かどうかのフラグ（開いた直後の変更検知を抑制するため）
   let isOpeningFile = false;
 
+  // メニューが開いているかどうか
+  let isFileMenuOpen = $state(false);
+
+  // メニュークリック時のハンドラ
+  function toggleFileMenu(event: MouseEvent) {
+    event.stopPropagation();
+    isFileMenuOpen = !isFileMenuOpen;
+  }
+
+  // メニュー外クリック時のハンドラ
+  function closeMenu() {
+    isFileMenuOpen = false;
+  }
+
+  // Fileメニューのアクション
+  function handleFileAction(action: string) {
+    console.log(`Action: ${action}`);
+    if (action === 'openFile') {
+      openFile();
+    }
+    isFileMenuOpen = false;
+  }
+
   // ファイルを開く関数
   async function openFile() {
     try {
@@ -153,15 +176,38 @@
   });
 </script>
 
-<div class="main-layout">
+<div class="main-layout" onclick={closeMenu} onkeydown={(e) => e.key === 'Escape' && closeMenu()} role="button" tabindex="0">
   
   <!-- Menu Bar -->
-  <header class="menu-bar">
+  <header class="menu-bar" onclick={(e) => e.stopPropagation()} onkeydown={() => {}} role="toolbar" tabindex="0">
     <div class="logo-container-small">
       <img src="/svelix_logo.png" alt="Svelix" class="logo-small" />
     </div>
     <div class="menu-items">
-      {#each ['File', 'Edit', 'Selection', 'View', 'Go', 'Run', 'Terminal', 'Help'] as menu}
+      <div class="menu-item-wrapper">
+        <div 
+          class="menu-item {isFileMenuOpen ? 'active' : ''}" 
+          onclick={toggleFileMenu} 
+          onkeydown={(e) => e.key === 'Enter' && toggleFileMenu(e as unknown as MouseEvent)}
+          role="button"
+          tabindex="0"
+        >File</div>
+        {#if isFileMenuOpen}
+          <div class="dropdown-menu">
+            <div class="dropdown-item" onclick={() => handleFileAction('newTextFile')} onkeydown={() => {}} role="menuitem" tabindex="0">New Text File</div>
+            <div class="dropdown-item" onclick={() => handleFileAction('newFile')} onkeydown={() => {}} role="menuitem" tabindex="0">New File...</div>
+            <div class="separator"></div>
+            <div class="dropdown-item" onclick={() => handleFileAction('openFile')} onkeydown={() => {}} role="menuitem" tabindex="0">Open File...</div>
+            <div class="dropdown-item" onclick={() => handleFileAction('openFolder')} onkeydown={() => {}} role="menuitem" tabindex="0">Open Folder...</div>
+            <div class="separator"></div>
+            <div class="dropdown-item" onclick={() => handleFileAction('save')} onkeydown={() => {}} role="menuitem" tabindex="0">Save</div>
+            <div class="dropdown-item" onclick={() => handleFileAction('saveAs')} onkeydown={() => {}} role="menuitem" tabindex="0">Save As...</div>
+            <div class="separator"></div>
+            <div class="dropdown-item" onclick={() => handleFileAction('exit')} onkeydown={() => {}} role="menuitem" tabindex="0">Exit</div>
+          </div>
+        {/if}
+      </div>
+      {#each ['Edit', 'Selection', 'View', 'Go', 'Run', 'Terminal', 'Help'] as menu}
         <div class="menu-item">{menu}</div>
       {/each}
     </div>
@@ -309,14 +355,51 @@
     gap: 4px;
   }
 
+  .menu-item-wrapper {
+    position: relative;
+  }
+
   .menu-item {
     padding: 2px 6px;
     cursor: pointer;
     border-radius: 3px;
   }
 
-  .menu-item:hover {
+  .menu-item:hover, .menu-item.active {
     background-color: #505050;
+  }
+
+  .dropdown-menu {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    background-color: #252526; /* VSCode Menu bg */
+    border: 1px solid #454545;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+    min-width: 200px;
+    z-index: 1000;
+    padding: 4px 0;
+    border-radius: 3px;
+  }
+
+  .dropdown-item {
+    padding: 6px 20px 6px 25px;
+    cursor: pointer;
+    color: #cccccc;
+    font-size: 13px;
+    display: flex;
+    align-items: center;
+  }
+
+  .dropdown-item:hover {
+    background-color: #094771; /* VSCode Menu Hover bg */
+    color: white;
+  }
+
+  .separator {
+    height: 1px;
+    background-color: #454545;
+    margin: 4px 10px;
   }
 
   /* Activity Bar */
