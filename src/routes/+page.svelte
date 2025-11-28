@@ -17,6 +17,7 @@
   import { StreamLanguage } from '@codemirror/language';
   import { dockerFile } from '@codemirror/legacy-modes/mode/dockerfile';
   import { linter, type Diagnostic as CodeMirrorDiagnostic, forceLinting } from "@codemirror/lint"; // CodeMirrorのLinter
+  import { autocompletion, type CompletionContext, type CompletionResult } from "@codemirror/autocomplete"; // 自動補完
   import { open, save, ask } from '@tauri-apps/plugin-dialog';
   import { invoke } from '@tauri-apps/api/core';
   import { getCurrentWindow } from '@tauri-apps/api/window';
@@ -149,6 +150,81 @@
         source: d.source
       };
     });
+  }
+
+  // LSPの補完関数
+  async function lspCompletionSource(context: CompletionContext): Promise<CompletionResult | null> {
+    // カーソル位置の取得
+    const { state, pos } = context;
+    const line = state.doc.lineAt(pos);
+    const lineNumber = line.number - 1; // 0-indexed
+    const character = pos - line.from;
+
+    // マッチング判定の緩和
+    // 単語(\w)だけでなく、ドットやタグ開始文字なども許容する
+    const word = context.matchBefore(/[\w\-\$\:\.]*/);
+
+    // 強制実行(Ctrl+Space)でない、かつ単語の途中でもない場合はスキップ
+    // ただし、Svelteの場合は < や . の直後なら補完を出したいので条件を調整
+    if (!context.explicit && (!word || word.from === word.to)) {
+        // 直前の文字を確認
+        const before = line.text.slice(character - 1, character);
+        if (!['.', '<', ':', '/', '"', "'", ' '].includes(before)) {
+            return null;
+        }
+    }
+
+    if (!activeFile || !activeFile.path) return null;
+
+    try {
+        console.log(`Asking Completion: ${lineNumber}:${character}`); // デバッグログ
+        const items = await LspService.getInstance().getCompletion(activeFile.path, lineNumber, character);
+        
+        // 候補がない場合
+        if (!items || items.length === 0) return null;
+
+        return {
+            from: word ? word.from : pos,
+            options: items.map((item: any) => {
+                // ラベルの整形 (Svelte LSPは詳細なラベルを返すことがある)
+                const label = item.label; 
+                
+                return {
+                    label: label,
+                    type: mapKindToType(item.kind),
+                    detail: item.detail,
+                    info: item.documentation ? (typeof item.documentation === 'string' ? item.documentation : item.documentation.value) : "",
+                    // insertTextが指定されていればそれを使う（スニペット対応などは別途必要だがまずは単純挿入）
+                    apply: item.insertText || label
+                };
+            })
+        };
+    } catch (e) {
+        console.error('Completion error:', e);
+        return null;
+    }
+  }
+
+  // LSPのKind番号をCodeMirrorのタイプ文字列に変換
+  function mapKindToType(kind: number): string {
+    switch (kind) {
+        case 1: return "text";
+        case 2: return "method";
+        case 3: return "function";
+        case 4: return "constructor";
+        case 5: return "field";
+        case 6: return "variable";
+        case 7: return "class";
+        case 8: return "interface";
+        case 9: return "module";
+        case 10: return "property";
+        case 11: return "unit";
+        case 12: return "value";
+        case 13: return "enum";
+        case 14: return "keyword";
+        case 15: return "snippet";
+        default: return "text";
+    }
   }
 
   // LSP用の言語ID取得ヘルパー
@@ -551,6 +627,10 @@
         // Linterの設定: 外部からの診断情報を反映する
         linter(view => {
             return currentDiagnostics;
+        }),
+        // 自動補完の設定
+        autocompletion({
+            override: [lspCompletionSource]
         }),
         EditorView.updateListener.of((update: ViewUpdate) => {
           if (update.docChanged && !isOpeningFile && activeFileIndex >= 0) {

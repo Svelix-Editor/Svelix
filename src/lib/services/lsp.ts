@@ -21,6 +21,19 @@ export interface PublishDiagnosticsParams {
 // 診断情報を受け取るコールバックの型
 type DiagnosticsCallback = (params: PublishDiagnosticsParams) => void;
 
+function toUri(path: string): string {
+    // Windowsのバックスラッシュをスラッシュに変換
+    let normalized = path.replace(/\\/g, '/');
+    
+    // Windowsのドライブレター (C:/...) で始まる場合、スラッシュを追加して file:///C:/... にする
+    if (!normalized.startsWith('/')) {
+        normalized = '/' + normalized;
+    }
+    
+    // エンコード（スペースなどを%20に）
+    return `file://${encodeURI(normalized)}`;
+}
+
 export class LspService {
   private static instance: LspService;
   private messageId = 0;
@@ -103,9 +116,10 @@ export class LspService {
   }
 
   async initialize(rootPath: string): Promise<number> {
-    return this.send('initialize', {
+    // initializeリクエスト
+    const id = await this.send('initialize', {
       processId: null,
-      rootUri: `file://${rootPath}`,
+      rootUri: toUri(rootPath),
       capabilities: {
         textDocument: {
           synchronization: {
@@ -117,19 +131,38 @@ export class LspService {
           completion: {
             dynamicRegistration: true,
             completionItem: {
-              snippetSupport: true
+              snippetSupport: true,
+              labelDetailsSupport: true
             }
+          },
+          hover: {
+            dynamicRegistration: true,
+            contentFormat: ['markdown', 'plaintext']
           }
+        },
+        workspace: {
+            workspaceFolders: true
         }
       },
-      trace: "verbose"
+      trace: "verbose",
+      workspaceFolders: [
+        {
+            uri: toUri(rootPath),
+            name: rootPath.split(/[\\/]/).pop() || 'root'
+        }
+      ]
     });
+
+    // initialized通知を送る (ハンドシェイク完了)
+    await this.sendNotification('initialized', {});
+    
+    return id;
   }
 
   async didOpen(path: string, content: string, languageId: string = 'rust'): Promise<void> {
     await this.sendNotification('textDocument/didOpen', {
       textDocument: {
-        uri: `file://${path}`,
+        uri: toUri(path),
         languageId,
         version: 1,
         text: content
@@ -140,12 +173,72 @@ export class LspService {
   async didChange(path: string, content: string, version: number): Promise<void> {
     await this.sendNotification('textDocument/didChange', {
       textDocument: {
-        uri: `file://${path}`,
+        uri: toUri(path),
         version
       },
       contentChanges: [
         { text: content }
       ]
+    });
+  }
+
+  async getCompletion(path: string, line: number, character: number): Promise<any[]> {
+    const result = await this.sendRequest('textDocument/completion', {
+      textDocument: {
+        uri: toUri(path)
+      },
+      position: {
+        line,
+        character
+      },
+      context: {
+        triggerKind: 1 // Invoked
+      }
+    });
+
+    if (!result) return [];
+    if (Array.isArray(result)) return result;
+    return result.items || [];
+  }
+
+  // リクエストを送信してレスポンスを待つ
+  async sendRequest(method: string, params: any): Promise<any> {
+    const id = this.messageId++;
+    const message = JSON.stringify({
+      jsonrpc: "2.0",
+      id,
+      method,
+      params
+    });
+
+    return new Promise((resolve, reject) => {
+        // 一時的なリスナーを登録
+        const unlisten = listen<string>('lsp-message', (event) => {
+            try {
+                const msg = JSON.parse(event.payload);
+                if (msg.id === id) {
+                    unlisten.then(fn => fn()); // リスナー解除
+                    if (msg.error) {
+                        reject(msg.error);
+                    } else {
+                        resolve(msg.result);
+                    }
+                }
+            } catch (e) {
+                // ignore
+            }
+        });
+        
+        invoke('send_lsp_message', { message }).catch(err => {
+            unlisten.then(fn => fn());
+            reject(err);
+        });
+        
+        // タイムアウト (30秒に延長)
+        setTimeout(() => {
+            unlisten.then(fn => fn());
+            reject('Request timeout');
+        }, 30000);
     });
   }
 
