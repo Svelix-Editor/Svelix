@@ -5,9 +5,9 @@
   import { oneDark } from '@codemirror/theme-one-dark';
   import { EditorView, keymap, type ViewUpdate } from '@codemirror/view';
   import { defaultKeymap } from '@codemirror/commands';
-  import { open } from '@tauri-apps/plugin-dialog';
-  import { readTextFile } from '@tauri-apps/plugin-fs';
-  import { Files, Search, GitGraph, Settings, X } from 'lucide-svelte';
+  import { open, save } from '@tauri-apps/plugin-dialog';
+  import { invoke } from '@tauri-apps/api/core';
+  import { Files, Search, GitGraph, Settings, X, Circle } from 'lucide-svelte';
 
   // エディタのコンテナ要素への参照
   let editorElement: HTMLElement;
@@ -16,6 +16,11 @@
 
   // 現在開いているファイルのパス
   let currentFilePath = $state<string | null>(null);
+  // 未保存の変更があるかどうか
+  let isDirty = $state(false);
+
+  // ファイルオープン中かどうかのフラグ（開いた直後の変更検知を抑制するため）
+  let isOpeningFile = false;
 
   // ファイルを開く関数
   async function openFile() {
@@ -33,9 +38,13 @@
       }
       
       const filePath = selected as string;
-      const content = await readTextFile(filePath);
+      // Rustのコマンドを呼び出してファイルを読み込む
+      const content = await invoke<string>('read_file_content', { path: filePath });
       
       currentFilePath = filePath;
+      // ファイルオープン処理開始
+      isOpeningFile = true;
+      isDirty = false;
       
       // エディタの内容を更新
       if (editorView) {
@@ -47,9 +56,16 @@
           }
         });
       }
+      
+      // 少し待ってからフラグを下ろす（CodeMirrorのupdate処理が完了するのを待つ）
+      setTimeout(() => {
+        isOpeningFile = false;
+      }, 50);
+      
     } catch (err) {
       console.error('Failed to open file:', err);
       alert('ファイルの読み込みに失敗しました');
+      isOpeningFile = false;
     }
   }
 
@@ -60,6 +76,50 @@
     return path.split(/[\\/]/).pop() || 'Untitled';
   }
 
+  // ファイルを保存する関数
+  async function saveFile() {
+    if (!editorView) return;
+
+    const content = editorView.state.doc.toString();
+
+    try {
+      if (currentFilePath) {
+        // 既存ファイルの上書き保存（Rustコマンド呼び出し）
+        await invoke('write_file_content', { path: currentFilePath, content });
+        isDirty = false;
+      } else {
+        // 新規保存（名前を付けて保存）
+        const filePath = await save({
+          filters: [{
+            name: 'Text Files',
+            extensions: ['txt', 'md', 'js', 'ts', 'svelte', 'json', 'html', 'css', 'rs']
+          }]
+        });
+
+        if (filePath) {
+          // Rustコマンド呼び出し
+          await invoke('write_file_content', { path: filePath, content });
+          currentFilePath = filePath;
+          isDirty = false;
+        }
+      }
+    } catch (err) {
+      console.error('Failed to save file:', err);
+      alert('ファイルの保存に失敗しました');
+    }
+  }
+
+  // CodeMirrorのキーバインド設定
+  const customKeymap = [
+    {
+      key: "Mod-s",
+      run: () => {
+        saveFile();
+        return true;
+      }
+    }
+  ];
+
   onMount(() => {
     if (!editorElement) return;
 
@@ -68,11 +128,11 @@
       doc: '// Welcome to Svelix Editor',
       extensions: [
         basicSetup,
-        keymap.of(defaultKeymap),
+        keymap.of([...customKeymap, ...defaultKeymap]),
         oneDark, // ダークテーマ
         EditorView.updateListener.of((update: ViewUpdate) => {
-          if (update.docChanged) {
-            // ドキュメントが変更されたときの処理（必要に応じて保存機能などを追加）
+          if (update.docChanged && !isOpeningFile) {
+            isDirty = true;
           }
         })
       ]
@@ -142,13 +202,32 @@
        <div class="tab active">
          <span class="tab-icon">📄</span>
          <span class="tab-name">{getFileName(currentFilePath)}</span>
-         <button class="tab-close" aria-label="Close Tab"><X size={14} /></button>
+         <div class="tab-actions">
+           {#if isDirty}
+             <div class="unsaved-indicator">
+               <Circle size={10} fill="white" strokeWidth={0} />
+             </div>
+             <!-- 未保存時もホバーで閉じるボタンを表示するための隠しボタン -->
+             <button class="tab-close close-on-hover" aria-label="Close Tab"><X size={14} /></button>
+           {:else}
+             <button class="tab-close" aria-label="Close Tab"><X size={14} /></button>
+           {/if}
+         </div>
        </div>
       {:else}
         <div class="tab active">
           <span class="tab-icon">📄</span>
           <span class="tab-name">Untitled</span>
-          <button class="tab-close" aria-label="Close Tab"><X size={14} /></button>
+          <div class="tab-actions">
+            {#if isDirty}
+              <div class="unsaved-indicator">
+                <Circle size={10} fill="white" strokeWidth={0} />
+              </div>
+              <button class="tab-close close-on-hover" aria-label="Close Tab"><X size={14} /></button>
+            {:else}
+              <button class="tab-close" aria-label="Close Tab"><X size={14} /></button>
+            {/if}
+          </div>
         </div>
       {/if}
     </div>
@@ -347,6 +426,34 @@
   .tab-icon {
     margin-right: 6px;
   }
+  
+  .tab-actions {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    margin-left: 5px;
+  }
+
+  .unsaved-indicator {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  /* VSCodeの挙動: 未保存時は●、ホバーするとXになる */
+  .tab:hover .unsaved-indicator {
+    display: none;
+  }
+
+  .tab:hover .tab-actions .close-on-hover {
+    display: flex;
+  }
+  
+  .close-on-hover {
+    display: none; /* デフォルトは非表示 */
+  }
 
   .tab-name {
     flex-grow: 1;
@@ -365,8 +472,6 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    margin-left: 5px;
-    opacity: 0;
   }
 
   .tab:hover .tab-close {
