@@ -5,8 +5,9 @@
   import { oneDark } from '@codemirror/theme-one-dark';
   import { EditorView, keymap, type ViewUpdate } from '@codemirror/view';
   import { defaultKeymap } from '@codemirror/commands';
-  import { open, save } from '@tauri-apps/plugin-dialog';
+  import { open, save, ask } from '@tauri-apps/plugin-dialog';
   import { invoke } from '@tauri-apps/api/core';
+  import { getCurrentWindow } from '@tauri-apps/api/window';
   import { Files, Search, GitGraph, Settings, X, Circle, ChevronRight, ChevronDown, File, Folder } from 'lucide-svelte';
 
   // エディタのコンテナ要素への参照
@@ -63,7 +64,7 @@
     isFileMenuOpen = false;
   }
 
-  function handleFileAction(action: string) {
+  async function handleFileAction(action: string) {
     console.log(`Action: ${action}`);
     if (action === 'openFile') {
       openFile();
@@ -74,9 +75,31 @@
     } else if (action === 'save') {
       saveFile();
     } else if (action === 'exit') {
-      // 終了処理（未実装）
+      await exitApp();
     }
     isFileMenuOpen = false;
+  }
+
+  // アプリケーション終了処理
+  async function exitApp() {
+    // 未保存のファイルがあるか確認
+    const dirtyFiles = openedFiles.filter(f => f.isDirty);
+    
+    if (dirtyFiles.length > 0) {
+      const confirmed = await ask('There are unsaved changes. Do you want to quit?\n(Press “Yes” to discard changes and exit, “No” to cancel)', {
+        title: 'Unsaved Changes',
+        kind: 'warning',
+        okLabel: 'Yes',
+        cancelLabel: 'No'
+      });
+      
+      if (!confirmed) {
+        return; // キャンセル
+      }
+    }
+    
+    // await getCurrentWindow().close();
+    await invoke('exit_app');
   }
 
   // フォルダを開く関数

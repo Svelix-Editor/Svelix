@@ -1,6 +1,5 @@
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 use std::fs;
-use std::path::Path;
 use serde::{Serialize, Deserialize};
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -62,6 +61,11 @@ fn read_dir(path: &str) -> Result<Vec<FileEntry>, String> {
     Ok(entries)
 }
 
+#[tauri::command]
+fn exit_app() {
+    std::process::exit(0);
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -72,7 +76,8 @@ pub fn run() {
             greet,
             read_file_content,
             write_file_content,
-            read_dir
+            read_dir,
+            exit_app
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
