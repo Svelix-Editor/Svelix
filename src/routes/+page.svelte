@@ -8,7 +8,8 @@
   import { open, save, ask } from '@tauri-apps/plugin-dialog';
   import { invoke } from '@tauri-apps/api/core';
   import { getCurrentWindow } from '@tauri-apps/api/window';
-  import { Files, Search, GitGraph, Settings, X, Circle, ChevronRight, ChevronDown, File, Folder } from 'lucide-svelte';
+  import { Files, Search, GitGraph, Settings, X, Circle } from 'lucide-svelte';
+  import FileTreeItem from '../lib/components/FileTreeItem.svelte';
 
   // エディタのコンテナ要素への参照
   let editorElement: HTMLElement;
@@ -134,35 +135,25 @@
     }
   }
 
-  // ツリービューでアイテムをクリックしたとき
-  async function handleTreeItemClick(entry: FileEntry) {
-    if (entry.is_dir) {
-      // フォルダの場合は展開/折りたたみ（今回は簡易的に直下の読み込みのみ実装済み、再帰は未実装）
-      // 再帰的なツリーを実装するには、entry.children に読み込んだ結果を格納し、再描画する必要がある
-      // ここでは簡易的に、ルートフォルダを入れ替えるのではなく、フォルダの中身を展開するロジックが必要
-      // ですが、まずはルートフォルダの表示切り替えとして実装します
-      // 本格的なツリービューには再帰コンポーネントが必要
-      // entry.isOpen = !entry.isOpen;
-    } else {
-      // ファイルの場合は開く
-      // 既に開いているかチェック
-      const existingIndex = openedFiles.findIndex(f => f.path === entry.path);
-      if (existingIndex !== -1) {
-        switchTab(existingIndex);
-        return;
-      }
+  // ツリービューでファイルをクリックしたとき
+  async function handleFileClick(entry: FileEntry) {
+    // 既に開いているかチェック
+    const existingIndex = openedFiles.findIndex(f => f.path === entry.path);
+    if (existingIndex !== -1) {
+      switchTab(existingIndex);
+      return;
+    }
 
-      try {
-        const content = await invoke<string>('read_file_content', { path: entry.path });
-        openedFiles = [...openedFiles, {
-          path: entry.path,
-          content: content,
-          isDirty: false
-        }];
-        switchTab(openedFiles.length - 1);
-      } catch (err) {
-        console.error('Failed to open file:', err);
-      }
+    try {
+      const content = await invoke<string>('read_file_content', { path: entry.path });
+      openedFiles = [...openedFiles, {
+        path: entry.path,
+        content: content,
+        isDirty: false
+      }];
+      switchTab(openedFiles.length - 1);
+    } catch (err) {
+      console.error('Failed to open file:', err);
     }
   }
 
@@ -485,24 +476,7 @@
           <div class="section-header" title={currentFolderPath}>{getFileName(currentFolderPath).toUpperCase()}</div>
           <div class="section-body file-tree">
             {#each folderFiles as entry}
-              <div 
-                class="tree-item"
-                onclick={() => handleTreeItemClick(entry)}
-                onkeydown={(e) => e.key === 'Enter' && handleTreeItemClick(entry)}
-                role="button"
-                tabindex="0"
-              >
-                <span class="tree-icon">
-                  {#if entry.is_dir}
-                    <ChevronRight size={14} />
-                    <Folder size={14} class="ml-1" />
-                  {:else}
-                    <span class="spacer"></span>
-                    <File size={14} class="ml-1" />
-                  {/if}
-                </span>
-                <span class="tree-name">{entry.name}</span>
-              </div>
+              <FileTreeItem {entry} onFileClick={handleFileClick} />
             {/each}
           </div>
         {:else}
@@ -750,42 +724,6 @@
   .file-tree {
     padding: 0;
     text-align: left;
-  }
-
-  .tree-item {
-    display: flex;
-    align-items: center;
-    padding: 3px 10px;
-    cursor: pointer;
-    font-size: 13px;
-    color: #cccccc;
-  }
-
-  .tree-item:hover {
-    background-color: #2a2d2e;
-  }
-
-  .tree-icon {
-    display: flex;
-    align-items: center;
-    margin-right: 6px;
-    color: #8da5b5; /* Icon color */
-  }
-  
-  /* ml-1 class replacement */
-  :global(.ml-1) {
-    margin-left: 4px;
-  }
-
-  .spacer {
-    width: 14px; /* ChevronRight size */
-    display: inline-block;
-  }
-
-  .tree-name {
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
   }
 
   .primary-button {
