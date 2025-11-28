@@ -3,8 +3,9 @@
   import { basicSetup } from 'codemirror';
   import { EditorState, Compartment } from '@codemirror/state';
   import { oneDark } from '@codemirror/theme-one-dark';
-  import { EditorView, keymap, type ViewUpdate, MatchDecorator, ViewPlugin, Decoration, type DecorationSet } from '@codemirror/view';
+  import { EditorView, keymap, type ViewUpdate } from '@codemirror/view';
   import { defaultKeymap } from '@codemirror/commands';
+  import { svelteRunes } from '../lib/editor/runes-highlight';
   import { svelte } from '@replit/codemirror-lang-svelte';
   import { javascript } from '@codemirror/lang-javascript';
   import { css } from '@codemirror/lang-css';
@@ -398,34 +399,6 @@
     }
   ];
 
-  // Runesハイライトの設定
-  const runesMatcher = new MatchDecorator({
-    regexp: /\$(state|derived|effect|props|bindable|inspect|host)(?:\.[a-zA-Z0-9_]+)?/g,
-    decoration: Decoration.mark({
-      class: "cm-svelte-rune"
-    })
-  });
-
-  const runesPlugin = ViewPlugin.fromClass(class {
-    decorations: DecorationSet;
-    constructor(view: EditorView) {
-      this.decorations = runesMatcher.createDeco(view);
-    }
-    update(update: ViewUpdate) {
-      this.decorations = runesMatcher.updateDeco(update, this.decorations);
-    }
-  }, {
-    decorations: v => v.decorations
-  });
-
-  // Runesのスタイル定義
-  const runesTheme = EditorView.baseTheme({
-    ".cm-svelte-rune": {
-      color: "#c678dd", // One Darkの紫系、あるいはもっと目立つ色
-      fontWeight: "bold"
-    }
-  });
-
   // 言語設定用のCompartment
   const languageConf = new Compartment();
 
@@ -440,8 +413,7 @@
         keymap.of([...customKeymap, ...defaultKeymap]),
         oneDark, // ダークテーマ
         languageConf.of([]), // 初期言語設定
-        runesPlugin,
-        runesTheme,
+        svelteRunes(),
         EditorView.updateListener.of((update: ViewUpdate) => {
           if (update.docChanged && !isOpeningFile && activeFileIndex >= 0) {
             openedFiles[activeFileIndex].isDirty = true;
