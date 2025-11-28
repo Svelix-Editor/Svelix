@@ -154,11 +154,21 @@
 </script>
 
 <div class="main-layout">
+  
+  <!-- Menu Bar -->
+  <header class="menu-bar">
+    <div class="logo-container-small">
+      <img src="/svelix_logo.png" alt="Svelix" class="logo-small" />
+    </div>
+    <div class="menu-items">
+      {#each ['File', 'Edit', 'Selection', 'View', 'Go', 'Run', 'Terminal', 'Help'] as menu}
+        <div class="menu-item">{menu}</div>
+      {/each}
+    </div>
+  </header>
+
   <!-- Activity Bar -->
   <aside class="activity-bar">
-    <div class="logo-container">
-       <img src="/svelix_logo.png" alt="Svelix" class="logo" />
-    </div>
     <div class="actions">
        <button class="action-item active" aria-label="Explorer"><Files size={24} /></button>
        <button class="action-item" aria-label="Search"><Search size={24} /></button>
@@ -264,12 +274,49 @@
   .main-layout {
     display: grid;
     grid-template-areas:
+      "menu-bar menu-bar menu-bar"
       "activity-bar sidebar editor"
       "status-bar status-bar status-bar";
     grid-template-columns: 48px 250px 1fr;
-    grid-template-rows: 1fr 22px;
+    grid-template-rows: 30px 1fr 22px;
     height: 100vh;
     width: 100vw;
+  }
+
+  /* Menu Bar */
+  .menu-bar {
+    grid-area: menu-bar;
+    background-color: #3c3c3c; /* VSCode Title Bar color */
+    display: flex;
+    align-items: center;
+    padding: 0 8px;
+    font-size: 13px;
+  }
+
+  .logo-container-small {
+    margin-right: 10px;
+    display: flex;
+    align-items: center;
+  }
+
+  .logo-small {
+    width: 20px;
+    height: 20px;
+  }
+
+  .menu-items {
+    display: flex;
+    gap: 4px;
+  }
+
+  .menu-item {
+    padding: 2px 6px;
+    cursor: pointer;
+    border-radius: 3px;
+  }
+
+  .menu-item:hover {
+    background-color: #505050;
   }
 
   /* Activity Bar */
@@ -282,26 +329,19 @@
     padding-top: 10px;
   }
 
-  .logo-container {
-    margin-bottom: 20px;
-  }
-
-  .logo {
-    width: 32px;
-    height: 32px;
-  }
-
   .action-item {
     background: transparent;
     border: none;
     color: #858585;
-    padding: 10px;
+    padding: 0;
     cursor: pointer;
     display: flex;
     justify-content: center;
     align-items: center;
-    width: 100%;
+    width: 48px;
+    height: 48px;
     position: relative;
+    border-left: 2px solid transparent; /* To prevent layout shift */
   }
 
   .action-item:hover {
@@ -486,6 +526,9 @@
     flex-grow: 1;
     overflow: hidden;
     position: relative;
+    /* CodeMirrorの高さを親要素に合わせる */
+    display: flex;
+    flex-direction: column;
   }
 
   /* Status Bar */
@@ -517,5 +560,9 @@
     height: 100%;
     font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
     font-size: 14px;
+  }
+  
+  :global(.cm-scroller) {
+    overflow: auto;
   }
 </style>
