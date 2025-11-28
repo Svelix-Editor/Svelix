@@ -14,10 +14,23 @@
   // CodeMirrorのエディタインスタンス
   let editorView: EditorView | undefined;
 
-  // 現在開いているファイルのパス
-  let currentFilePath = $state<string | null>(null);
-  // 未保存の変更があるかどうか
-  let isDirty = $state(false);
+  // ファイル情報の型定義
+  interface FileInfo {
+    path: string | null; // nullなら新規ファイル
+    content: string;
+    isDirty: boolean;
+    scrollPosition?: number;
+  }
+
+  // 開いているファイルのリスト
+  let openedFiles = $state<FileInfo[]>([]);
+  // 現在アクティブなファイルのインデックス
+  let activeFileIndex = $state<number>(-1);
+
+  // 現在アクティブなファイル情報を取得するヘルパー
+  let activeFile = $derived(activeFileIndex >= 0 && activeFileIndex < openedFiles.length ? openedFiles[activeFileIndex] : null);
+  let currentFilePath = $derived(activeFile ? activeFile.path : null);
+  let isDirty = $derived(activeFile ? activeFile.isDirty : false);
 
   // ファイルオープン中かどうかのフラグ（開いた直後の変更検知を抑制するため）
   let isOpeningFile = false;
@@ -36,11 +49,16 @@
     isFileMenuOpen = false;
   }
 
-  // Fileメニューのアクション
   function handleFileAction(action: string) {
     console.log(`Action: ${action}`);
     if (action === 'openFile') {
       openFile();
+    } else if (action === 'newTextFile' || action === 'newFile') {
+      createNewFile();
+    } else if (action === 'save') {
+      saveFile();
+    } else if (action === 'exit') {
+      // 終了処理（未実装）
     }
     isFileMenuOpen = false;
   }
@@ -61,35 +79,126 @@
       }
       
       const filePath = selected as string;
+      
+      // 既に開いているかチェック
+      const existingIndex = openedFiles.findIndex(f => f.path === filePath);
+      if (existingIndex !== -1) {
+        switchTab(existingIndex);
+        return;
+      }
+
       // Rustのコマンドを呼び出してファイルを読み込む
       const content = await invoke<string>('read_file_content', { path: filePath });
       
-      currentFilePath = filePath;
-      // ファイルオープン処理開始
-      isOpeningFile = true;
-      isDirty = false;
+      // 新しいファイルを追加
+      openedFiles = [...openedFiles, {
+        path: filePath,
+        content: content,
+        isDirty: false
+      }];
       
-      // エディタの内容を更新
-      if (editorView) {
-        editorView.dispatch({
-          changes: {
-            from: 0,
-            to: editorView.state.doc.length,
-            insert: content
-          }
-        });
-      }
-      
-      // 少し待ってからフラグを下ろす（CodeMirrorのupdate処理が完了するのを待つ）
-      setTimeout(() => {
-        isOpeningFile = false;
-      }, 50);
+      // 新しいファイルをアクティブにする
+      switchTab(openedFiles.length - 1);
       
     } catch (err) {
       console.error('Failed to open file:', err);
       alert('ファイルの読み込みに失敗しました');
       isOpeningFile = false;
     }
+  }
+
+  // タブを切り替える関数
+  function switchTab(index: number) {
+    if (index < 0 || index >= openedFiles.length) return;
+    
+    // 現在のファイルの内容を保存（メモリ上）
+    if (activeFile && editorView) {
+      openedFiles[activeFileIndex].content = editorView.state.doc.toString();
+      // スクロール位置の保存などもここで行うと良い
+    }
+
+    activeFileIndex = index;
+    const file = openedFiles[index];
+
+    // エディタの内容を更新
+    if (editorView) {
+      // ファイル切り替え中フラグを立てる
+      isOpeningFile = true;
+      
+      editorView.dispatch({
+        changes: {
+          from: 0,
+          to: editorView.state.doc.length,
+          insert: file.content
+        }
+      });
+      
+      // 少し待ってからフラグを下ろす
+      setTimeout(() => {
+        isOpeningFile = false;
+      }, 50);
+    }
+  }
+
+  // タブを閉じる関数
+  function closeTab(index: number, event?: MouseEvent) {
+    if (event) event.stopPropagation();
+    
+    // 未保存の確認などはここで実装する
+    if (openedFiles[index].isDirty) {
+      if (!confirm('未保存の変更があります。閉じてもよろしいですか？')) {
+        return;
+      }
+    }
+
+    const newOpenedFiles = openedFiles.filter((_, i) => i !== index);
+    openedFiles = newOpenedFiles;
+
+    if (activeFileIndex === index) {
+      // アクティブなタブを閉じた場合、隣のタブをアクティブにするか、タブがなければ-1にする
+      if (newOpenedFiles.length === 0) {
+        activeFileIndex = -1;
+        // エディタをクリア
+        if (editorView) {
+          editorView.dispatch({
+            changes: {
+              from: 0,
+              to: editorView.state.doc.length,
+              insert: '' // Welcomeメッセージなどを表示しても良い
+            }
+          });
+        }
+      } else {
+        // 右側のタブがあればそれを、なければ左側（index - 1）をアクティブにする
+        const newIndex = index < newOpenedFiles.length ? index : index - 1;
+        // switchTabを使って内容を更新したいが、state更新直後なので少し複雑
+        // ここでは簡易的にindexを更新して、reactiveに処理させるか、明示的に呼び出す
+        // switchTabは内部で現在の内容を保存しようとするので、閉じたファイルに対しては不適切
+        // 直接エディタ更新ロジックを書く
+        activeFileIndex = newIndex;
+        const file = newOpenedFiles[newIndex];
+        if (editorView) {
+          isOpeningFile = true;
+          editorView.dispatch({
+            changes: { from: 0, to: editorView.state.doc.length, insert: file.content }
+          });
+          setTimeout(() => isOpeningFile = false, 50);
+        }
+      }
+    } else if (activeFileIndex > index) {
+      // 閉じたタブより後ろのタブがアクティブだった場合、インデックスをずらす
+      activeFileIndex--;
+    }
+  }
+
+  // 新規ファイル作成（仮実装）
+  function createNewFile() {
+    openedFiles = [...openedFiles, {
+      path: null,
+      content: '',
+      isDirty: false
+    }];
+    switchTab(openedFiles.length - 1);
   }
 
   // ファイル名を取得するヘルパー
@@ -101,15 +210,17 @@
 
   // ファイルを保存する関数
   async function saveFile() {
-    if (!editorView) return;
+    if (!editorView || !activeFile) return;
 
     const content = editorView.state.doc.toString();
+    const currentPath = activeFile.path;
 
     try {
-      if (currentFilePath) {
+      if (currentPath) {
         // 既存ファイルの上書き保存（Rustコマンド呼び出し）
-        await invoke('write_file_content', { path: currentFilePath, content });
-        isDirty = false;
+        await invoke('write_file_content', { path: currentPath, content });
+        openedFiles[activeFileIndex].isDirty = false;
+        openedFiles[activeFileIndex].content = content;
       } else {
         // 新規保存（名前を付けて保存）
         const filePath = await save({
@@ -122,8 +233,9 @@
         if (filePath) {
           // Rustコマンド呼び出し
           await invoke('write_file_content', { path: filePath, content });
-          currentFilePath = filePath;
-          isDirty = false;
+          openedFiles[activeFileIndex].path = filePath;
+          openedFiles[activeFileIndex].isDirty = false;
+          openedFiles[activeFileIndex].content = content;
         }
       }
     } catch (err) {
@@ -154,8 +266,10 @@
         keymap.of([...customKeymap, ...defaultKeymap]),
         oneDark, // ダークテーマ
         EditorView.updateListener.of((update: ViewUpdate) => {
-          if (update.docChanged && !isOpeningFile) {
-            isDirty = true;
+          if (update.docChanged && !isOpeningFile && activeFileIndex >= 0) {
+            openedFiles[activeFileIndex].isDirty = true;
+            // 念のためcontentも更新しておく（スイッチ時に使用するため）
+            openedFiles[activeFileIndex].content = update.state.doc.toString();
           }
         })
       ]
@@ -231,19 +345,43 @@
       <span>EXPLORER</span>
     </div>
     <div class="sidebar-content">
+      <!-- Open Editors Section -->
+      <div class="explorer-section">
+        <div class="section-header">OPEN EDITORS</div>
+        <div class="section-body open-editors-list">
+          {#if openedFiles.length === 0}
+            <div class="empty-message">No open files</div>
+          {:else}
+            {#each openedFiles as file, index}
+              <div 
+                class="open-editor-item {activeFileIndex === index ? 'active' : ''}"
+                onclick={() => switchTab(index)}
+                onkeydown={(e) => e.key === 'Enter' && switchTab(index)}
+                role="button"
+                tabindex="0"
+              >
+                <div class="file-info">
+                  <span class="file-icon">📄</span>
+                  <span class="file-name">{getFileName(file.path)}</span>
+                  {#if file.isDirty}
+                    <span class="unsaved-dot">●</span>
+                  {/if}
+                </div>
+                <button class="close-btn" onclick={(e) => closeTab(index, e)} aria-label="Close File">
+                  <X size={14} />
+                </button>
+              </div>
+            {/each}
+          {/if}
+        </div>
+      </div>
+
+      <!-- No Folder Opened Section -->
       <div class="explorer-section">
         <div class="section-header">NO FOLDER OPENED</div>
         <div class="section-body">
-          {#if !currentFilePath}
-            <p>You have not yet opened a folder.</p>
-            <button onclick={openFile} class="primary-button">Open File</button>
-          {:else}
-            <div class="opened-file-info">
-              <span class="file-icon">📄</span>
-              <span class="file-name">{getFileName(currentFilePath)}</span>
-            </div>
-            <button onclick={openFile} class="primary-button" style="margin-top: 15px;">Open Another File</button>
-          {/if}
+          <p>You have not yet opened a folder.</p>
+          <button onclick={openFile} class="primary-button">Open File</button>
           <!-- 将来的にはOpen Folderボタンも追加 -->
         </div>
       </div>
@@ -254,37 +392,31 @@
   <main class="editor-area">
     <!-- Tabs -->
     <div class="tabs-bar">
-      {#if currentFilePath}
-       <div class="tab active">
+      {#each openedFiles as file, index}
+       <div 
+         class="tab {activeFileIndex === index ? 'active' : ''}"
+         onclick={() => switchTab(index)}
+         onkeydown={(e) => e.key === 'Enter' && switchTab(index)}
+         role="button"
+         tabindex="0"
+       >
          <span class="tab-icon">📄</span>
-         <span class="tab-name">{getFileName(currentFilePath)}</span>
+         <span class="tab-name">{getFileName(file.path)}</span>
          <div class="tab-actions">
-           {#if isDirty}
+           {#if file.isDirty}
              <div class="unsaved-indicator">
                <Circle size={10} fill="white" strokeWidth={0} />
              </div>
              <!-- 未保存時もホバーで閉じるボタンを表示するための隠しボタン -->
-             <button class="tab-close close-on-hover" aria-label="Close Tab"><X size={14} /></button>
+             <button class="tab-close close-on-hover" onclick={(e) => closeTab(index, e)} aria-label="Close Tab"><X size={14} /></button>
            {:else}
-             <button class="tab-close" aria-label="Close Tab"><X size={14} /></button>
+             <button class="tab-close" onclick={(e) => closeTab(index, e)} aria-label="Close Tab"><X size={14} /></button>
            {/if}
          </div>
        </div>
-      {:else}
-        <div class="tab active">
-          <span class="tab-icon">📄</span>
-          <span class="tab-name">Untitled</span>
-          <div class="tab-actions">
-            {#if isDirty}
-              <div class="unsaved-indicator">
-                <Circle size={10} fill="white" strokeWidth={0} />
-              </div>
-              <button class="tab-close close-on-hover" aria-label="Close Tab"><X size={14} /></button>
-            {:else}
-              <button class="tab-close" aria-label="Close Tab"><X size={14} /></button>
-            {/if}
-          </div>
-        </div>
+      {/each}
+      {#if openedFiles.length === 0}
+        <!-- タブがない場合のプレースホルダー（必要に応じて） -->
       {/if}
     </div>
     
@@ -498,14 +630,68 @@
     background-color: #1177bb;
   }
 
-  .opened-file-info {
-    margin-top: 15px;
-    padding: 5px;
-    background-color: #383838;
+  .open-editors-list {
+    padding: 0;
+    text-align: left;
+  }
+
+  .empty-message {
+    padding: 10px 20px;
+    font-size: 13px;
+    color: #969696;
+    font-style: italic;
+  }
+
+  .open-editor-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 3px 10px;
+    cursor: pointer;
+    font-size: 13px;
+    color: #cccccc;
+  }
+
+  .open-editor-item:hover {
+    background-color: #2a2d2e;
+  }
+
+  .open-editor-item.active {
+    background-color: #37373d;
+    color: white;
+  }
+
+  .file-info {
     display: flex;
     align-items: center;
-    gap: 8px;
+    overflow: hidden;
+    flex-grow: 1;
+  }
+
+  .unsaved-dot {
+    margin-left: 6px;
+    font-size: 10px;
+    color: white;
+  }
+
+  .close-btn {
+    background: transparent;
+    border: none;
+    color: #cccccc;
+    cursor: pointer;
+    padding: 2px;
     border-radius: 3px;
+    display: none; /* デフォルト非表示 */
+    align-items: center;
+    justify-content: center;
+  }
+
+  .open-editor-item:hover .close-btn {
+    display: flex; /* ホバー時表示 */
+  }
+
+  .close-btn:hover {
+    background-color: #4b4b4b;
   }
 
   .file-name {
@@ -533,17 +719,23 @@
   }
 
   .tab {
-    background-color: #1e1e1e;
-    color: #ffffff;
+    background-color: #2d2d2d; /* Inactive tab bg */
+    color: #969696; /* Inactive tab text */
     padding: 0 10px;
     display: flex;
     align-items: center;
     border-right: 1px solid #252526;
-    border-top: 1px solid #007acc; /* Active tab indicator */
+    border-top: 1px solid transparent; 
     min-width: 120px;
     max-width: 200px;
     cursor: pointer;
     font-size: 13px;
+  }
+
+  .tab.active {
+    background-color: #1e1e1e;
+    color: #ffffff;
+    border-top: 1px solid #007acc; /* Active tab indicator */
   }
   
   .tab-icon {
