@@ -153,7 +153,7 @@
       };
     });
   }
-
+  
   // LSPの補完関数
   async function lspCompletionSource(context: CompletionContext): Promise<CompletionResult | null> {
     // カーソル位置の取得

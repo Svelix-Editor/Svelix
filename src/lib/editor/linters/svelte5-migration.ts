@@ -97,6 +97,64 @@ export function svelte5MigrationLinter(view: EditorView): Diagnostic[] {
       });
   }
 
+  // 全てのletをチェックするのは重いので、scriptタグ内での簡易チェック
+  const scriptRegexForLet = /<script[^>]*>([\s\S]*?)<\/script>/g;
+  let scriptMatchForLet;
+
+  while ((scriptMatchForLet = scriptRegexForLet.exec(text)) !== null) {
+      const scriptContent = scriptMatchForLet[1];
+      const scriptStart = scriptMatchForLet.index + scriptMatchForLet[0].indexOf(scriptMatchForLet[1]);
+      
+      // let変数の宣言を検出: let x = 0; または let x;
+      // 値の部分も含めてキャプチャする
+      const letRegex = /let\s+(\w+)\s*(?:=\s*([^;]+))?/g;
+      let letMatch;
+      while ((letMatch = letRegex.exec(scriptContent)) !== null) {
+          const varName = letMatch[1];
+          const initialValue = letMatch[2] ? letMatch[2].trim() : undefined;
+          const declFrom = scriptStart + letMatch.index;
+          
+          // 既に$stateを使っている場合はスキップ
+          if (initialValue && (initialValue.startsWith('$state') || initialValue.startsWith('$derived') || initialValue.startsWith('$props'))) {
+              continue;
+          }
+
+          // 再代入を検索: x = ... (簡易的)
+          // 宣言より後ろにあること
+          const assignRegex = new RegExp(`\\b${varName}\\s*=[^=]`, 'g');
+          assignRegex.lastIndex = letMatch.index + letMatch[0].length;
+          
+          if (assignRegex.test(scriptContent)) {
+              // 再代入が見つかった場合、警告を出す
+              diagnostics.push({
+                  from: declFrom,
+                  to: declFrom + letMatch[0].length,
+                  severity: "hint", // 警告ではなくヒントレベル
+                  message: `Svelte 5: Variable '${varName}' is reassigned. If this should be reactive, use $state.`,
+                  actions: [{
+                      name: "Change to $state",
+                      apply(view, from, to) {
+                          // "let x = 0" -> "let x = $state(0)"
+                          // "let x" -> "let x = $state()"
+                          if (initialValue) {
+                              // 値がある場合
+                              const text = view.state.doc.sliceString(from, to);
+                              // 宣言全体を置換する方が安全
+                              const newText = text.replace(/=\s*([^;]+)/, `= $state($1)`);
+                              view.dispatch({changes: {from, to, insert: newText}});
+                          } else {
+                              // 値がない場合 (let x;)
+                              // この場合、正規表現のマッチ範囲は "let x" までなので、そのまま追加できるか確認が必要
+                              // letMatch[0]の長さを信頼する
+                              view.dispatch({changes: {from, to, insert: `let ${varName} = $state()`}});
+                          }
+                      }
+                  }]
+              });
+          }
+      }
+  }
+
   return diagnostics;
 }
 
