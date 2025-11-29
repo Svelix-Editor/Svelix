@@ -107,6 +107,8 @@
 <style>
   .tree-item {
     display: flex;
+    flex-direction: row;
+    flex-wrap: nowrap;
     align-items: center;
     padding-top: 3px;
     padding-bottom: 3px;
@@ -115,6 +117,8 @@
     font-size: 13px;
     color: #cccccc;
     user-select: none;
+    width: 100%;
+    box-sizing: border-box;
   }
 
   .tree-item:hover {
@@ -122,11 +126,13 @@
   }
 
   .tree-icon {
-    display: flex;
+    display: inline-flex;
     align-items: center;
+    justify-content: center;
     margin-right: 6px;
     color: #8da5b5;
     flex-shrink: 0;
+    min-width: 16px;
   }
   
   :global(.ml-1) {
@@ -142,6 +148,7 @@
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+    flex-grow: 1;
   }
 
   .loading-message {
