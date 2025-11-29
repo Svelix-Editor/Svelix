@@ -1167,6 +1167,7 @@
     height: 35px;
     display: flex;
     overflow-x: auto;
+    flex-shrink: 0;
   }
 
   .tab {
@@ -1255,6 +1256,7 @@
     /* CodeMirrorの高さを親要素に合わせる */
     display: flex;
     flex-direction: column;
+    min-height: 0;
   }
 
   /* Status Bar */
