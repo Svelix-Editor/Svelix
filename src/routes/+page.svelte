@@ -17,7 +17,8 @@
   import { StreamLanguage } from '@codemirror/language';
   import { dockerFile } from '@codemirror/legacy-modes/mode/dockerfile';
   import { linter, type Diagnostic as CodeMirrorDiagnostic, forceLinting } from "@codemirror/lint"; // CodeMirrorのLinter
-  import { autocompletion, type CompletionContext, type CompletionResult, acceptCompletion } from "@codemirror/autocomplete"; // 自動補完
+  import { autocompletion, type CompletionContext, type CompletionResult, acceptCompletion, completeFromList } from "@codemirror/autocomplete"; // 自動補完
+  import { svelte5Snippets } from '../lib/editor/snippets/svelte5';
   import { open, save, ask } from '@tauri-apps/plugin-dialog';
   import { invoke } from '@tauri-apps/api/core';
   import { getCurrentWindow } from '@tauri-apps/api/window';
@@ -634,7 +635,17 @@
         }),
         // 自動補完の設定
         autocompletion({
-            override: [lspCompletionSource]
+            override: [
+                // Svelteファイルの場合のみSvelte 5スニペットを有効化
+                (context) => {
+                    const ext = currentFilePath?.split('.').pop()?.toLowerCase();
+                    if (ext === 'svelte') {
+                        return completeFromList(svelte5Snippets)(context);
+                    }
+                    return null;
+                },
+                lspCompletionSource
+            ]
         }),
         EditorView.updateListener.of((update: ViewUpdate) => {
           if (update.docChanged && !isOpeningFile && activeFileIndex >= 0) {
