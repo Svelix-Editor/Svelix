@@ -2,7 +2,7 @@ import { MatchDecorator, ViewPlugin, Decoration, type DecorationSet, EditorView,
 import type { Extension } from '@codemirror/state';
 
 const runesMatcher = new MatchDecorator({
-  regexp: /(\$(state|derived|effect|props|bindable|inspect|host)(?:\.[a-zA-Z0-9_]+)?)|(\{#snippet\s+[a-zA-Z0-9_]+\})/g,
+  regexp: /(\$(state|derived|effect|props|bindable|inspect|host)(?:\.[a-zA-Z0-9_]+)?)|(\{#snippet\s+[^}]+\})|(\{\/snippet\})|(\{@render\s+[^}]+\})/g,
   decoration: Decoration.mark({
     class: "cm-svelte-rune"
   })
